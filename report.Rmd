@@ -1,0 +1,212 @@
+---
+title: "Statistical Report"
+header-includes: \usepackage{setspace}\doublespacing \usepackage{geometry}
+date: "`r Sys.Date()`"
+output:
+  word_document:
+    toc: true
+    toc_depth: '4'
+  pdf_document:
+    toc: true
+    toc_depth: 4
+    number_sections: true
+    keep_tex: true
+  html_document:
+    toc: true
+    toc_depth: '4'
+    df_print: paged
+fontsize: 12pt
+spacing: double
+indent: true
+geometry: margin=1in
+documentclass: report
+always_allow_html: true
+mainfont: Times New Roman
+editor_options:
+  chunk_output_type: console
+---
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(
+  message = F,
+  warning = F,
+  echo = F
+)
+
+```
+
+# Data Preparation
+
+In this section we load the various data sets and aggregate the ones we need to produce the relevant outputs. Depending on the nature of the data files we have and the output we expect, we either combine these data sets horizontally or vertically. Once the data is in good shape we proceed to produce the relevant visuals and reports.
+
+The aggregated data contains 160 observations and four columns.
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(here)
+library(duckdb)
+library(stargazer)
+library(janitor)
+library(plotly)
+library(ggthemes)
+library(forcats)
+
+######## DATA PREPARATION ################
+#########################################
+
+#campaign experiments
+
+c27_exp_m31 <- read_csv(here('data','2638_2638_campaigns_c27_experiment_m31__diabetes__motivational__apr_2024_2024-04-01.csv'), show_col_types = F)
+
+c27_exp_m32 <- read_csv(here('data','2638_2638_campaigns_c27_experiment_m32__diabetes__motivational__apr_2024_2024-04-08.csv'), show_col_types = F)
+
+c27_exp_m33 <- read_csv(here('data','2638_2638_campaigns_c27_experiment_m33__diabetes__general_facts__apr_2024_2024-04-15.csv'), show_col_types = F)
+
+c27_exp_m34 <- read_csv(here('data','2638_2638_campaigns_c27_experiment_m34__diabetes__general_facts__apr_2024_2024-04-29.csv'), show_col_types = F)
+
+#campaign trackers
+
+camp_tracker_wk1 <- read_csv(here('data','campaign_trackers - week_1.csv'),
+                             show_col_types = F)
+
+camp_tracker_wk2 <- read_tsv(here('data','campaign_trackers - week_2.tsv'),
+                             show_col_types = F)
+
+camp_tracker_wk3 <- read_excel(here('data',
+                                    'campaign_trackers - week_3.xlsx'),
+                               sheet = 'week_3')
+
+camp_tracker_wk4 <- read_csv(here('data','campaign_trackers - week_4.csv'),
+                             show_col_types = F)
+
+
+#data aggregation
+
+
+#using DUCKDB
+
+campaign_reports <- dbGetQuery(
+  conn = dbConnect(duckdb()),
+  statement = "
+  
+  SELECT
+    *
+  FROM '2638_2638_campaigns_c27_experiment_m31__diabetes__motivational__apr_2024_2024-04-01.csv'
+  
+  UNION 
+  
+  SELECT 
+   *
+  FROM '2638_2638_campaigns_c27_experiment_m32__diabetes__motivational__apr_2024_2024-04-08.csv'
+  
+  UNION
+  
+  SELECT
+     *
+     
+  FROM '2638_2638_campaigns_c27_experiment_m33__diabetes__general_facts__apr_2024_2024-04-15.csv'
+  
+  UNION
+  
+  SELECT
+    *
+    
+  FROM '2638_2638_campaigns_c27_experiment_m34__diabetes__general_facts__apr_2024_2024-04-29.csv'
+  
+  "
+)
+
+head(campaign_reports, 10)
+dim(campaign_reports)
+
+
+```
+
+
+
+# Visualization
+
+Visualization plays a key role in communicating key findings. A good visualization should reveal essential information about the data without being overwhelming to the audience.
+
+The following visual helps to convey the information on the number of messages that were sent, those that were actually delivered, those that were read and those that obtained a response.
+
+A histogram is also presented. This is also another way of displaying the same information.
+
+## A visual of sent vs Delivered vs Read vs Responded messages
+
+```{r}
+
+campaign_reports %>% 
+  tabyl(message_status) %>% 
+  knitr::kable(caption = 'Count of message status')
+
+
+fig <- plot_ly(
+
+    type = "funnel",
+
+    y = c("Sent", "Delivered", "Read", "Responded"),
+    
+    orientation = "h",
+
+    x = c(160, 25, 64, 63),
+
+    textinfo = "value+percent initial") 
+
+
+fig <- fig %>%
+
+  layout(yaxis = list(categoryarray = c("Sent", "Delivered", "Read",
+                                        "Responded")))
+
+fig
+
+```
+
+## Histogram
+
+```{r}
+
+campaign_reports <- campaign_reports %>% 
+  filter(message_status != 'invalid_user') %>% 
+  mutate(message_status = factor(message_status))
+
+
+##recode the levels for nice printing on the graph
+campaign_reports$message_status <- 
+  forcats::fct_recode(campaign_reports$message_status, 
+                             'Delivered' = 'delivered',
+                             'Responded' = 'responded', 
+                             'Read'      = 'read') 
+
+#produce the histogram
+
+campaign_reports %>% 
+  group_by(message_status) %>% 
+  summarise(n = n())  %>% 
+  ggplot(aes(x = reorder(message_status,n), y = n,
+             fill = factor(message_status))) +
+  geom_col(width = 0.5) +
+  labs(x = '',
+       y = 'Number of responses',
+       title = 'Count of Responses') +
+  theme_economist() +
+  theme(plot.title = element_text(hjust = 0.5, colour = 'blue'),
+        plot.background = element_rect(color = 'blue', fill = 'grey'),
+        legend.position = 'none')
+
+
+```
+
+
+# Highest performing campaign week
+
+
+To determine the highest performing campaign week we need a measure that can help us know whether a week is high performing or not.
+
+We can monitor the number of messages that were actually read and those that obtained a response to have an idea about the performance of a given week. A week that has the highest number of read messages and also a relatively high number of responses is deemed to be the highest performing week. This will actually help us know that our campaigns have been effective in the course of that week.
+
+
+
+
